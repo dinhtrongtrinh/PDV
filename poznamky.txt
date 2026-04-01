@@ -1,0 +1,68 @@
+
+------------------------------------------------
+Paralelní a distribuované výpočty - Poznamky ##
+------------------------------------------------
+
+#První týden
+    Zatím bez OpenMP
+
+    -vytvoření thread pomocí #include<thread> a pak std::thread
+        #include <iostream>
+        #include <thread>
+        void dummy_thread(int id, int n) {
+            std::cout << "Thread " << id << " prints " << n << "\n";
+        }
+        int main() {
+            auto t1 = std::thread(dummy_thread, 1, 2);
+            auto t2 = std::thread(dummy_thread, 2, 42);
+            t1.join();
+            t2.join();
+        }
+    -lambda funkce [capture] (parameters) { code }; 
+
+        auto message = []() {
+            cout << "Hello World!\n";
+        };
+
+        auto add = [](int a, int b) {
+            return a + b;
+        };
+        
+        ##tady ten capture znamena, ze ono to vezme promenou venku 
+        int x = 10;
+        auto show = [x]() {
+            cout << x;
+        };
+
+    -Mutexy nam umoznuje zabranit vice vlaken vyuzivat stejny zdroj
+        std::mutex m;
+        void dummy_thread() {
+            std::cout << "Zde muze byt soucasne vice vlaken.\n";
+            {
+                auto lock = std::unique_lock(m);
+                std::cout << "Ale zde budu uplne sam...\n";
+            }
+            std::cout << "A tady opet nemusim byt sam...\n";
+        }
+    
+    -Atomicka operace vyuzijeme, pokud v ramci kriticke sekce chceme provest jednu operaci na jednu promenou
+        #include <atomic>
+        int x = 0; → std::atomic<int> x = 0;
+
+    -Podminkove promene umozni vlakna uspat a zavolat, kdy bude potreba (tzv busy waiting)
+        std::condition_variable cv;
+        void logger() {
+            bool last_value = true;
+            while(true) {
+                cv.wait(lock, [&] { return value != last_value; });
+                
+                std::cout << "Value changed to " << value << "\n";
+                last_value = value;
+                
+                cv.notify_all();
+            }
+        }
+
+
+
+
