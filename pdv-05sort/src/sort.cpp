@@ -19,4 +19,4 @@ void radix_par(std::vector<std::string*>& vector_to_sort, MappingFunction mappin
 
     // na konci metody by melo byt zaruceno, ze vector pointeru - vector_to_sort bude spravne serazeny.
     // pointery budou serazeny podle retezcu, na ktere odkazuji, kdy retezcu jsou serazeny abecedne
-}
+}fadfasdfafafdaf
