@@ -44,7 +44,25 @@ static void normaldist_scalar(float mu, float sigma, std::vector<float>& data) {
 // Vektorova implementace funkce 'normaldist_scalar(...)'.
 static void normaldist_vec(float mu, float sigma, std::vector<float>& data) {
     // TODO: Pouzijte `vec_f32` pro rychlejsi vypocet funkce hustoty
-    throw pdv::not_implemented{};
+    float expdiv = -2 * sigma * sigma;
+    float normalizer = std::sqrt(2 * PI * sigma * sigma);
+
+    vec_f32 v_mu{mu};
+    vec_f32 v_sigma{sigma};
+    vec_f32 v_normalizer{normalizer};
+
+    size_t i = 0;
+    size_t vec_size = data.size() - (data.size() % 4);
+
+    for (;i < vec_size; i++) {
+        vec_f32 v_data{data[i]};
+        vec_f32 sc_data{v_data - v_mu};
+        sc_data = sc_data * sc_data;
+        sc_data = sc_data * sc_data;
+        sc_data = sc_data / expdiv;
+        sc_data = exp_vec_cpp(sc_data);
+        sc_data = sc_data / v_normalizer;
+    }
 }
 
 int main() {

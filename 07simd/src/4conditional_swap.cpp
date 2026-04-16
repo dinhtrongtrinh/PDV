@@ -13,8 +13,13 @@ void conditional_swap_scalar(float* data, size_t N) {
 }
 
 void conditional_swap_vec(float* data, size_t N) {
-    // TODO: Pouzijte `vec_f32` pro rychlejsi vypocet prohazovani prvku
-    throw pdv::not_implemented{};
+    size_t half = N / 2;
+    for (size_t i = 0; i < half; i += vec_f32::size()) {
+        vec_f32 low = vec_f32{&data[i], element_aligned};
+        vec_f32 high = vec_f32{&data[half + i], element_aligned};
+        min(low, high).copy_to(&data[i], element_aligned);
+        max(low, high).copy_to(&data[half + i], element_aligned);
+    }
 }
 
 int main() {
