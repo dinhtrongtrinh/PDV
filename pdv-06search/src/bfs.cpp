@@ -76,7 +76,7 @@ state_ptr bfs(state_ptr root) {
     std::vector<std::unordered_set<uint64_t>> visited_shards(lock_num);
     std::vector<omp_lock_t> locks(lock_num);
     for (size_t i = 0; i < lock_num; ++i) {
-        visited_shards[i].reserve(100000 / lock_num);
+        visited_shards[i].reserve(1000000 / lock_num);
         omp_init_lock(&locks[i]);
     }
     main_container.push_back(root);
@@ -141,29 +141,31 @@ state_ptr bfs(state_ptr root) {
                 #pragma omp for schedule(dynamic,64)
                 for (size_t i = 0; i < main_container.size(); ++i) {
                     state_ptr current = main_container[i];
-                    if (current->goal()) {
-                        #pragma omp critical
-                        {
-                            found = true;
-                            if (best_goal != nullptr) {
-                                if (current->id() < best_goal->id()) {
-                                    best_goal = current;
+                    for (auto next_state : current->next_states()) {
+                        if (next_state->goal()) {
+                            #pragma omp critical
+                            {
+                                found = true;
+                                if (best_goal != nullptr) {
+                                    if (next_state->id() < best_goal->id()) {
+                                        best_goal = next_state;
+                                    }
+                                }
+                                else {
+                                    best_goal = next_state;
                                 }
                             }
-                            else {
-                                best_goal = current;
+                        }
+                        else {
+                            auto next_state_id = next_state->id() % lock_num;
+                            //if the id was not found
+                            omp_set_lock(&locks[next_state_id]);
+                            if (visited_shards[next_state_id].find(next_state->id()) == visited_shards[next_state_id].end()) {
+                                thread_vector.push_back(next_state);
+                                visited_shards[next_state_id].insert(next_state->id());
                             }
+                            omp_unset_lock(&locks[next_state_id]);
                         }
-                    }
-                    for (auto next_state : current->next_states()) {
-                        auto next_state_id = next_state->id() % lock_num;
-                        //if the id was not found
-                        omp_set_lock(&locks[next_state_id]);
-                        if (visited_shards[next_state_id].find(next_state->id()) == visited_shards[next_state_id].end()) {
-                            thread_vector.push_back(next_state);
-                            visited_shards[next_state_id].insert(next_state->id());
-                        }
-                        omp_unset_lock(&locks[next_state_id]);
                     }
                 }
                 #pragma omp critical
