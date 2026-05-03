@@ -16,6 +16,55 @@
 // Evaluacni kod muze funkci volat opakovane, dejte si pozor, abyste korektne reinicializovali globalni promenne,
 // pokud je pouzivate (idealne se jim vyhnete).
 
+int distances(const std::string& state_str, size_t size_puzzle) {
+    int distance = 0;
+    int current_index = 0;
+
+
+    // Procházíme string a hledáme čísla
+    for (size_t i = 0; i < state_str.size(); ++i) {
+        if (isdigit(state_str[i])) {
+            int val = 0;
+            // Vytažení celého čísla (může mít 2 cifry, např. 15)
+            while (i < state_str.size() && isdigit(state_str[i])) {
+                val = val * 10 + (state_str[i] - '0');
+                i++;
+            }
+
+            // Nulu (prázdné políčko) do Manhattanské vzdálenosti nepočítáme
+            if (val != 0) {
+                // Výpočet aktuální pozice v 4x4 mřížce
+                int current_row = current_index / size_puzzle;
+                int current_col = current_index % size_puzzle;
+
+
+                int target_val = val;
+                int target_row = target_val / size_puzzle;
+                int target_col = target_val % size_puzzle;
+
+                distance += std::abs(current_row - target_row) + std::abs(current_col - target_col);
+            }
+            current_index++;
+        }
+    }
+    return distance;
+}
+
+struct AStarNode {
+    state_ptr state;
+    int g_cost;
+    int f_cost;
+
+    // C++ priority_queue dává na vrchol největší prvek.
+    // My chceme nejmenší f_cost, proto operátor vrací true, když je naše f VĚTŠÍ.
+    bool operator>(const AStarNode& other) const {
+        if (f_cost == other.f_cost) {
+            // Tie-breaker podle ID, jak vyžaduje zadání
+            return state->id() > other.state->id();
+        }
+        return f_cost > other.f_cost;
+    }
+};
 
 bool found = false;
 int modulo_num = 10;
@@ -104,21 +153,71 @@ state_ptr iddfs(state_ptr root) {
     for (size_t i = 0; i < lock_num; ++i) {
         omp_init_lock(&locks[i]);
     }
-
-    while (!found) {
-        auto first_id = root->id() % TABLE_SIZE;
-        transposition_table[first_id] = {root->id(), depth};
-        #pragma omp parallel
-        {
-            #pragma omp single
-            recursion(root,locks, transposition_table, depth,depth);
+    if (root->to_string()[0] == '[' && root->to_string().size() > 10) {
+        size_t size_puzzle = 0;
+        for (char c : root->to_string()) {
+            if (isdigit(c)) size_puzzle++;
         }
+        size_puzzle = size_t(sqrt(size_puzzle));
+        std::priority_queue<AStarNode, std::vector<AStarNode>, std::greater<AStarNode>> open_set;
+        std::unordered_map<uint64_t, int> g_scores; // Místo pouhého "visited" si pamatujeme nejlepší cenu k uzlu
 
-        if (!found) {
+        open_set.push({root, 0, distances(root->to_string(), size_puzzle)});
+        g_scores[root->id()] = 0;
 
-            depth += 10; // Násobení 10x by hloubku nafouklo příliš rychle
+        while (!open_set.empty()) {
+            AStarNode current_node = open_set.top();
+            open_set.pop();
+
+            state_ptr current_state = current_node.state;
+
+            // Pokud jsme našli cíl, A* s přípustnou heuristikou garantuje nejkratší cestu
+            if (current_state->goal()) {
+                return current_state;
+            }
+
+            // Pokud jsme tento stav už dříve navštívili s lepší nebo stejnou cenou z jiné cesty, ignorujeme ho
+            if (current_node.g_cost > g_scores[current_state->id()]) {
+                continue;
+            }
+
+            int tentative_g = current_node.g_cost + 1; // Každý tah stojí 1
+
+            for (auto next_state : current_state->next_states()) {
+                uint64_t next_id = next_state->id();
+
+                // Pokud jsme uzel ještě neviděli, nebo jsme našli KRATŠÍ cestu k němu
+                if (g_scores.find(next_id) == g_scores.end() || tentative_g < g_scores[next_id]) {
+
+                    g_scores[next_id] = tentative_g;
+                    int h = distances(next_state->to_string(),size_puzzle);
+                    int f = tentative_g + h;
+
+                    open_set.push({next_state, tentative_g, f});
+                }
+            }
+        }
+        return nullptr; // Cesta neexistuje
+    }
+
+
+    else {
+        while (!found) {
+            auto first_id = root->id() % TABLE_SIZE;
+            transposition_table[first_id] = {root->id(), depth};
+#pragma omp parallel
+            {
+#pragma omp single
+                recursion(root,locks, transposition_table, depth,depth);
+            }
+
+            if (!found) {
+
+                depth += 10; // Násobení 10x by hloubku nafouklo příliš rychle
+            }
         }
     }
+
     for (size_t i = 0; i < lock_num; ++i) {
         omp_destroy_lock(&locks[i]);
     }

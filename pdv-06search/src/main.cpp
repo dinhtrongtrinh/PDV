@@ -95,7 +95,7 @@ void evaluate(size_t test_iterations, const domain auto& domain, search_fn searc
 
 int main() {
     // Vytvoreni instance Hanojskych vezi s 3 koliky, 1 vezi (umistenou na prvnim koliku) a 4 kotouci ve vezi.
-    auto domain = hanoi<3, 1, 4>();
+    //auto domain = hanoi<3, 1, 4>();
 
     // Vytvorit domenu "splnovani booleovskych funkci" muzete vytvorit nasledovne:
     // Tato domena pak ma:
@@ -105,7 +105,7 @@ int main() {
     // - seed nahodneho generatoru je 1
     // - cena za prirazeni hodnoty jednomu literalu je uniformni (1)
     //   (v pripade 'false' je cena za prirazeni hodnoty i-te promenne i)
-    //auto domain = sat<30, 7, 3, 1, true>();
+    auto domain = sat<30, 7, 3, 1, true>();
 
     // Vytvorit domenu sliding-puzzle hranou na hraci plose 4x4 (15-puzzle) muzete takto:
     // Inicialni pozice je generovana provedenim 70 nahodnych tahu (nahodny generator je inicializovany seedem 0).
