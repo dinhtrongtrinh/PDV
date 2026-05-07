@@ -1,169 +1,129 @@
 package cz.cvut.fel.agents.pdv.swim;
 
 import cz.cvut.fel.agents.pdv.dsand.Message;
-import cz.cvut.fel.agents.pdv.dsand.MessageWrapper;
 import cz.cvut.fel.agents.pdv.dsand.Pair;
 
 import java.util.*;
-import java.util.Map.Entry;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
-/**
- * Trida s implementaci metody act() pro proces Failure Detector. Tuto tridu (a tridy pouzivanych zprav) budete
- * odevzdavat. Do tridy si muzete doplnit vlastni pomocne datove struktury. Hodnoty muzete inicializovat primo
- * v konstruktoru. Klicova je metoda act(), kterou vola kazda instance tridy FailureDetectorProcess ve sve metode
- * act(). Tuto metodu naimplementujte podle protokolu SWIM predstaveneho na prednasce.
- *
- * Pokud si stale jeste nevite rady s frameworkem, inspiraci muzete nalezt v resenych prikladech ze cviceni.
- */
 public class ActStrategy {
 
-    // maximalni zpozdeni zprav
-    private final int maxDelayForMessages;
-    private final List<String> otherProcesses;
+    private final int maxDelay;
+    private String myNodeId;
+    private int roundRobinIdx;
+    private final List<String> peers;
 
-    private int ticks_done = 0;
-    private int number_of_help = 2;
-    private int period = 10;
+    private final Map<String, Boolean> indirectPingSent;
+    private final Map<String, Set<String>> indirectWaiters;
+    private final Map<String, Integer> pendingPings;
 
-    private  Map<String, Integer> sentPings = new HashMap<>();
-
-    private  Map<String, Integer> sentPingReqs = new HashMap<>();
-
-    private Map<String,String> requestsToForward = new HashMap<>();
-    // Definujte vsechny sve promenne a datove struktury, ktere budete potrebovat
+    private final Random rnd;
+    private int logicalTime;
+    private final int pingInterval = 5;
 
     public ActStrategy(int maxDelayForMessages, List<String> otherProcesses,
                        int timeToDetectKilledProcess, int upperBoundOnMessages) {
-        this.maxDelayForMessages = maxDelayForMessages;
-        this.otherProcesses = otherProcesses;
 
-        // Doplne inicializaci
+        this.maxDelay = maxDelayForMessages;
+        this.rnd = new Random();
+
+        // Zamíchání a výběr maximálně 25 náhodných sousedů
+        List<String> shuffled = new ArrayList<>(otherProcesses);
+        Collections.shuffle(shuffled, this.rnd);
+        this.peers = shuffled.stream().limit(25).collect(Collectors.toList());
+
+        this.roundRobinIdx = this.rnd.nextInt(this.peers.size());
+
+        this.indirectPingSent = new HashMap<>();
+        this.indirectWaiters = new HashMap<>();
+        this.pendingPings = new HashMap<>();
+        this.myNodeId = null;
     }
 
-    /**
-     * Metoda je volana s kazdym zavolanim metody act v F ailureDetectorProcess. Metodu implementujte-==
-     * tak, jako byste implementovali metodu act() v FailureDetectorProcess, misto pouzivani send()
-     * pridejte zpravy v podobe paru - prijemce, zprava do listu. Zpravy budou nasledne odeslany.
-     * <p>
-     * Diky zavedeni teto metody muzeme kontrolovat pocet odeslanych zprav vasi implementaci.
-     */
     public List<Pair<String, Message>> act(Queue<Message> inbox, String disseminationProcess) {
-        // Od DisseminationProcess muzete dostat zpravu typu DeadProcessMessage, ktera Vas
-        // informuje o spravne detekovanem ukoncenem procesu.
-        // DisseminationProcess muzete poslat zpravu o detekovanem "mrtvem" procesu.
-        // Zprava musi byt typu PFDMessage.
-
-        // procesy, ktery nemohu pouzit
-        Set<String> cant_use = new HashSet<>();
-
-        ticks_done++; // Zvýšíme čas hned na začátku
         List<Pair<String, Message>> outbox = new ArrayList<>();
 
-        // checknu, jaky zpravy jsem dostal
-        while(!inbox.isEmpty()){
-            Message msg = inbox.poll();
-            //Posila mi, ze jsem nazivu
-            if(msg instanceof AckMsg){
-                AckMsg ack = (AckMsg) msg;
+        // === FÁZE 1: ZPRACOVÁNÍ PŘÍCHOZÍCH ZPRÁV ===
+        Message incoming;
+        while ((incoming = inbox.poll()) != null) {
 
-                String ID_alive = ack.getProcessId();
-
-                if (ID_alive == null) {
-                    ID_alive = msg.sender;
-                }
-                sentPings.remove(ID_alive);
-                sentPingReqs.remove(ID_alive);
-
-                if(requestsToForward.containsKey(ID_alive)){
-                    String from_who = requestsToForward.remove(ID_alive);
-                    outbox.add(new Pair<>(from_who,msg));
-                    cant_use.add(from_who);
-                }
-
+            if (this.myNodeId == null) {
+                this.myNodeId = incoming.recipient;
             }
-            //Posila, jestli jsem nazivu
-            else if(msg instanceof PingMsg){
-                String kdoSePta = msg.sender;
 
-                Message ack = new AckMsg(null);
-                outbox.add(new Pair<>(kdoSePta,ack));
-                cant_use.add(kdoSePta);
-            }
-            //Posila, jestli ten druhy je nazivu
-            else if(msg instanceof PingReqMsg){
-                PingReqMsg prm = (PingReqMsg) msg;
+            if (incoming instanceof PingMsg) {
+                outbox.add(new Pair<>(incoming.sender, new AckMsg(null)));
 
-                String goal_sender = prm.getTargetProcessId();
-                String from_who = msg.sender;
+                forwardAcks(incoming.sender, outbox);
+                this.pendingPings.remove(incoming.sender);
+                this.indirectPingSent.remove(incoming.sender);
 
-                outbox.add(new Pair<>(goal_sender,new PingMsg()));
+            } else if (incoming instanceof PingReqMsg) {
+                PingReqMsg req = (PingReqMsg) incoming;
+                String target = req.getTargetProcessId();
 
-                requestsToForward.put(goal_sender,from_who);
-                cant_use.add(goal_sender);
+                this.indirectWaiters.computeIfAbsent(target, k -> new HashSet<>()).add(incoming.sender);
+                outbox.add(new Pair<>(target, new PingMsg()));
 
-            }
-        }
-        // checknu, jake zpravy jsou mimo tick, abych je mohl rict, ze jsou mrtvy
-        List<String> toAskForHelp = new ArrayList<>();
-        List<String> deadProcesses = new ArrayList<>();
+            } else if (incoming instanceof AckMsg) {
+                AckMsg ack = (AckMsg) incoming;
+                String aliveId = ack.getProcessId() == null ? incoming.sender : ack.getProcessId();
 
-        for (Map.Entry<String, Integer> entry : sentPings.entrySet()) {
-            String processId = entry.getKey();
-            int tickKdyBylOdeslan = entry.getValue();
-
-            if (ticks_done - tickKdyBylOdeslan > (2 * maxDelayForMessages) + 2) {
-                toAskForHelp.add(processId);
-            }
-        }
-        for (String badProcessId : toAskForHelp) {
-            sentPings.remove(badProcessId);
-            sentPingReqs.put(badProcessId, ticks_done);
-
-            List<String> possibleHelpers = new ArrayList<>(otherProcesses);
-            possibleHelpers.remove(badProcessId);
-
-            Collections.shuffle(possibleHelpers);
-
-            int helpersCount = Math.min(number_of_help, possibleHelpers.size());
-            for (int i = 0; i < helpersCount; i++) {
-                String helperId = possibleHelpers.get(i);
-                Message pingReq = new PingReqMsg(badProcessId);
-                outbox.add(new Pair<>(helperId, pingReq));
+                forwardAcks(aliveId, outbox);
+                this.pendingPings.remove(aliveId);
+                this.indirectPingSent.remove(aliveId);
             }
         }
 
-        for (Map.Entry<String, Integer> entry : sentPingReqs.entrySet()) {
-            String processId = entry.getKey();
-            int tickKdyBylOdeslan = entry.getValue();
+        // === FÁZE 2: ODESLÁNÍ NOVÝCH PINGŮ ===
+        if (this.logicalTime % this.pingInterval == 1) {
+            String targetNode;
 
-            if (ticks_done - tickKdyBylOdeslan > (4 * maxDelayForMessages) +2 ) {
-                deadProcesses.add(processId);
+            do {
+                this.roundRobinIdx = (this.roundRobinIdx + 1) % this.peers.size();
+                targetNode = this.peers.get(this.roundRobinIdx);
+            } while (this.indirectPingSent.containsKey(targetNode));
+
+            outbox.add(new Pair<>(targetNode, new PingMsg()));
+            this.pendingPings.put(targetNode, this.logicalTime);
+        }
+
+        // === FÁZE 3: TIMEOUTY A ŽÁDOSTI O POMOC ===
+        List<String> deadNodes = new ArrayList<>();
+
+        for (Map.Entry<String, Integer> entry : this.pendingPings.entrySet()) {
+            String node = entry.getKey();
+            int timeSent = entry.getValue();
+
+            if (this.logicalTime - timeSent > 5 * this.maxDelay) {
+                outbox.add(new Pair<>(disseminationProcess, new PFDMessage(node)));
+                deadNodes.add(node);
+            }
+            else if (this.logicalTime - timeSent > 2 * this.maxDelay && !this.indirectPingSent.containsKey(node)) {
+                List<String> helpers = new ArrayList<>(this.peers);
+                Collections.shuffle(helpers, this.rnd);
+
+                // Pošleme žádost až 7 náhodným uzlům
+                helpers.stream().limit(7).forEach(helper -> {
+                    outbox.add(new Pair<>(helper, new PingReqMsg(node)));
+                });
+
+                this.indirectPingSent.put(node, true);
             }
         }
-        for (String deadId : deadProcesses) {
-            sentPingReqs.remove(deadId);
-            otherProcesses.remove(deadId);
-            Message deadMsg = new PFDMessage(deadId);
-            outbox.add(new Pair<>(disseminationProcess, deadMsg));
-        }
 
-        // vyberem nejaky proces a vratime to
-        if (!otherProcesses.isEmpty() && ticks_done % period == 0) {
-            List<String> availableToPing = new ArrayList<>(otherProcesses);
-            availableToPing.removeAll(cant_use);
-            if (!availableToPing.isEmpty()) {
-                Random rand = new Random();
-                String randomTarget = availableToPing.get(rand.nextInt(availableToPing.size()));
+        deadNodes.forEach(this.pendingPings::remove);
 
-                Message newPing = new PingMsg();
-                outbox.add(new Pair<>(randomTarget, newPing));
+        this.logicalTime++;
 
-                sentPings.put(randomTarget, ticks_done);
-            }
-        }
-        return outbox;
+        return outbox.stream().distinct().collect(Collectors.toList());
     }
 
+
+    private void forwardAcks(String targetId, List<Pair<String, Message>> outbox) {
+        Set<String> waiters = this.indirectWaiters.getOrDefault(targetId, Collections.emptySet());
+        for (String waiter : waiters) {
+            outbox.add(new Pair<>(waiter, new AckMsg(targetId)));
+        }
+    }
 }
